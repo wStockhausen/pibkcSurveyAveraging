@@ -12,7 +12,7 @@ DATA_SECTION
     !! yrs.fill_seqadd(styr,1);
     init_int nobs                //number of observations
     init_int uncType             //uncertainty type (0=cv's, 1=arithmetic cv's)
-    init_matrix obs(1,nobs,1,3)      //observations matrix (year, estimate, uncertainty)
+    init_matrix obs(1,nobs,1,3)  //observations matrix (year, estimate, uncertainty)
     //end of input data
         
     //derived quantities
@@ -36,19 +36,24 @@ DATA_SECTION
         }
     }
  END_CALCS
+    !!cout<<"srv_yrs = "<<srv_yrs<<endl;
+    !!cout<<"srv_obs = "<<srv_obs<<endl;
+    !!cout<<"srv_cvs = "<<srv_cvs<<endl;
+    !!cout<<"srv_sds = "<<srv_sds<<endl;
         
-    number meany
     vector srv_var(1,nobs)  //variance
     vector srv_cst(1,nobs)  //likelihood constants
-    !! srv_var = elem_prod(srv_sds,srv_sds);
+    !! srv_var = square(srv_sds);
     !! srv_cst = log(2.0*M_PI*srv_var);
+    !!cout<<"srv_var = "<<srv_var<<endl;
+    !!cout<<"srv_cst = "<<srv_cst<<endl;
  
 PARAMETER_SECTION
     init_number logSdLam
-    sdreport_vector sdrepPredLnScl(styr,endyr);
-    sdreport_vector sdrepPredArScl(styr,endyr);
     random_effects_vector predLnScl(styr,endyr);
     objective_function_value jnll;
+    
+    sdreport_vector sdrepPredLnScl(styr,endyr);
 
 PROCEDURE_SECTION
     jnll=0.0;
@@ -61,7 +66,6 @@ PROCEDURE_SECTION
     }
 
     if (sd_phase()){
-      sdrepPredArScl = exp(predLnScl);
       sdrepPredLnScl = predLnScl;
     }
 
@@ -73,13 +77,15 @@ SEPARABLE_FUNCTION void obs_mod(const dvariable& predLnScl, int i)
     jnll+=0.5*(srv_cst(i) + square(predLnScl-log(srv_obs(i)))/srv_var(i));
 
 REPORT_SECTION
-    sdrepPredLnScl = predLnScl;
-    report << sdrepPredLnScl <<endl;
+    report << predLnScl <<endl;
   
 FINAL_SECTION
     cout<<"in FINAL_SECTION"<<endl;
-    dvar_vector UCI = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);
-    dvar_vector LCI = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);
+    dvar_vector est = exp(sdrepPredLnScl);
+    dvar_vector sd  = sdrepPredLnScl.sd;
+    dvar_vector cv  = sqrt(exp(square(sd))-1.0);
+    dvar_vector uci = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);
+    dvar_vector lci = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);
     dvar_vector upp90th = exp(sdrepPredLnScl+1.645*sdrepPredLnScl.sd);
     dvar_vector low90th = exp(sdrepPredLnScl-1.645*sdrepPredLnScl.sd);
 
@@ -90,9 +96,10 @@ FINAL_SECTION
     write_R(srv_obs);
     write_R(srv_sds);
     write_R(yrs);
-    write_R(LCI);
-    write_R(sdrepPredArScl);
-    write_R(UCI);
+    write_R(est);
+    write_R(cv);
+    write_R(lci);
+    write_R(uci);
     write_R(low90th);
     write_R(upp90th);
     write_R(sdrepPredLnScl);

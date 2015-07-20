@@ -42,10 +42,16 @@ model_data::model_data(int argc,char * argv[]) : ad_comm(argc,argv)
             srv_sds(i) = sqrt(log(1.0+square(srv_cvs(i))));
         }
     }
+cout<<"srv_yrs = "<<srv_yrs<<endl;
+cout<<"srv_obs = "<<srv_obs<<endl;
+cout<<"srv_cvs = "<<srv_cvs<<endl;
+cout<<"srv_sds = "<<srv_sds<<endl;
   srv_var.allocate(1,nobs);
   srv_cst.allocate(1,nobs);
- srv_var = elem_prod(srv_sds,srv_sds);
+ srv_var = square(srv_sds);
  srv_cst = log(2.0*M_PI*srv_var);
+cout<<"srv_var = "<<srv_var<<endl;
+cout<<"srv_cst = "<<srv_cst<<endl;
 }
 
 model_parameters::model_parameters(int sz,int argc,char * argv[]) : 
@@ -54,12 +60,11 @@ model_parameters::model_parameters(int sz,int argc,char * argv[]) :
   model_parameters_ptr=this;
   initializationfunction();
   logSdLam.allocate("logSdLam");
-  sdrepPredLnScl.allocate(styr,endyr,"sdrepPredLnScl");
-  sdrepPredArScl.allocate(styr,endyr,"sdrepPredArScl");
   predLnScl.allocate(styr,endyr,"predLnScl");
   prior_function_value.allocate("prior_function_value");
   likelihood_function_value.allocate("likelihood_function_value");
   jnll.allocate("jnll");  /* ADOBJECTIVEFUNCTION */
+  sdrepPredLnScl.allocate(styr,endyr,"sdrepPredLnScl");
 }
 void model_parameters::userfunction(void)
 {
@@ -72,7 +77,6 @@ void model_parameters::userfunction(void)
       obs_mod(predLnScl(srv_yrs(i)),i);
     }
     if (sd_phase()){
-      sdrepPredArScl = exp(predLnScl);
       sdrepPredLnScl = predLnScl;
     }
 }
@@ -101,16 +105,18 @@ void model_parameters::report(const dvector& gradients)
     cerr << "error trying to open report file"  << adprogram_name << ".rep";
     return;
   }
-    sdrepPredLnScl = predLnScl;
-    report << sdrepPredLnScl <<endl;
+    report << predLnScl <<endl;
   
 }
 
 void model_parameters::final_calcs()
 {
     cout<<"in FINAL_SECTION"<<endl;
-    dvar_vector UCI = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);
-    dvar_vector LCI = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);
+    dvar_vector est = exp(sdrepPredLnScl);
+    dvar_vector sd  = sdrepPredLnScl.sd;
+    dvar_vector cv  = sqrt(exp(square(sd))-1.0);
+    dvar_vector uci = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);
+    dvar_vector lci = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);
     dvar_vector upp90th = exp(sdrepPredLnScl+1.645*sdrepPredLnScl.sd);
     dvar_vector low90th = exp(sdrepPredLnScl-1.645*sdrepPredLnScl.sd);
     ofstream mysum("rwout.rep");
@@ -120,9 +126,10 @@ void model_parameters::final_calcs()
     write_R(srv_obs);
     write_R(srv_sds);
     write_R(yrs);
-    write_R(LCI);
-    write_R(sdrepPredArScl);
-    write_R(UCI);
+    write_R(est);
+    write_R(cv);
+    write_R(lci);
+    write_R(uci);
     write_R(low90th);
     write_R(upp90th);
     write_R(sdrepPredLnScl);
@@ -196,7 +203,6 @@ void df1b2_parameters::user_function(void)
       obs_mod(predLnScl(srv_yrs(i)),i);
     }
     if (sd_phase()){
-      sdrepPredArScl = exp(predLnScl);
       sdrepPredLnScl = predLnScl;
     }
 }
@@ -260,10 +266,9 @@ end_df1b2_funnel_stuff();
 void df1b2_parameters::allocate(void) 
 {
   logSdLam.allocate("logSdLam");
-  sdrepPredLnScl.allocate(styr,endyr,"sdrepPredLnScl");
-  sdrepPredArScl.allocate(styr,endyr,"sdrepPredArScl");
   predLnScl.allocate(styr,endyr,"predLnScl");
   prior_function_value.allocate("prior_function_value");
   likelihood_function_value.allocate("likelihood_function_value");
   jnll.allocate("jnll");  /* ADOBJECTIVEFUNCTION */
+  sdrepPredLnScl.allocate(styr,endyr,"sdrepPredLnScl");
 }
