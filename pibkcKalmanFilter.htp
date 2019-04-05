@@ -6,6 +6,7 @@ class model_data : public ad_comm{
   data_int  styr;
   data_int  endyr;
   ivector yrs;
+  ivector est_yrs;
   data_int  nobs;
   data_int  uncType;
   data_matrix obs;
@@ -70,6 +71,7 @@ private:
   param_number prior_function_value;
   param_number likelihood_function_value;
   objective_function_value  jnll;
+  param_stddev_number  sdrepPredLnSclNxtObs;
   param_stddev_vector sdrepPredLnScl;
 public:
   virtual void userfunction(void);
@@ -107,6 +109,7 @@ static df1b2_parameters * get_df1b2_parameters_ptr(void)
 { 
 return df1b2_parameters_ptr; 
 } 
+void deallocate(); 
 df1b2_parameters(int sz,int argc, char * argv[]) : 
 df1b2_pre_parameters(sz,argc,argv) 
 { 
@@ -117,6 +120,7 @@ df1b2_parameters_ptr=this;
   df1b2variable prior_function_value;
   df1b2variable likelihood_function_value;
    // re_objective_function_value  jnll;
+  df1b2variable  sdrepPredLnSclNxtObs;
   df1b2vector sdrepPredLnScl;
 virtual void user_function(void); 
 virtual void allocate(void); 

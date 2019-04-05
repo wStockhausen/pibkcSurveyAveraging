@@ -1,3 +1,9 @@
+#ifdef DEBUG
+  #ifndef __SUNPRO_C
+    #include <cfenv>
+    #include <cstdlib>
+  #endif
+#endif
     #include <admodel.h>
     #undef REPORT
     #define write_R(object) mysum << "$" << #object "\n" << object << endl;
@@ -21,6 +27,8 @@ model_data::model_data(int argc,char * argv[]) : ad_comm(argc,argv)
   endyr.allocate("endyr");
   yrs.allocate(styr,endyr);
  yrs.fill_seqadd(styr,1);
+  est_yrs.allocate(styr,endyr+1);
+ est_yrs.fill_seqadd(styr,1);
   nobs.allocate("nobs");
   uncType.allocate("uncType");
   obs.allocate(1,nobs,1,3,"obs");
@@ -64,6 +72,7 @@ model_parameters::model_parameters(int sz,int argc,char * argv[]) :
   prior_function_value.allocate("prior_function_value");
   likelihood_function_value.allocate("likelihood_function_value");
   jnll.allocate("jnll");  /* ADOBJECTIVEFUNCTION */
+  sdrepPredLnSclNxtObs.allocate("sdrepPredLnSclNxtObs");
   sdrepPredLnScl.allocate(styr,endyr,"sdrepPredLnScl");
 }
 void model_parameters::userfunction(void)
@@ -77,7 +86,8 @@ void model_parameters::userfunction(void)
       obs_mod(predLnScl(srv_yrs(i)),i);
     }
     if (sd_phase()){
-      sdrepPredLnScl = predLnScl;
+      sdrepPredLnSclNxtObs = predLnScl(endyr);
+      sdrepPredLnScl       = predLnScl;
     }
 }
 
@@ -112,21 +122,29 @@ void model_parameters::report(const dvector& gradients)
 void model_parameters::final_calcs()
 {
     cout<<"in FINAL_SECTION"<<endl;
-    dvar_vector est = exp(sdrepPredLnScl);
-    dvar_vector sd  = sdrepPredLnScl.sd;
-    dvar_vector cv  = sqrt(exp(square(sd))-1.0);
-    dvar_vector uci = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);
-    dvar_vector lci = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);
-    dvar_vector upp90th = exp(sdrepPredLnScl+1.645*sdrepPredLnScl.sd);
-    dvar_vector low90th = exp(sdrepPredLnScl-1.645*sdrepPredLnScl.sd);
+    dvar_vector est(styr,endyr+1); //estimated survey quantity styr-endyr + 1-step prediction for endyr+1
+    est(styr,endyr) = exp(sdrepPredLnScl); est(endyr+1) = exp(sdrepPredLnSclNxtObs);
+    dvar_vector sd(styr,endyr+1);  //std dev for ln-scale survey quantity styr-endyr + 1-step prediction for endyr+1
+    sd(styr,endyr)  = sdrepPredLnScl.sd;   sd(endyr+1)  = logSdLam;
+    
+    dvar_vector uci(styr,endyr+1);
+    uci(styr,endyr) = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);      uci(endyr+1) = exp(sdrepPredLnSclNxtObs+1.96*logSdLam);
+    dvar_vector lci(styr,endyr+1);
+    lci(styr,endyr) = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);      lci(endyr+1) =  exp(sdrepPredLnSclNxtObs-1.96*logSdLam);
+    dvar_vector upp90th(styr,endyr+1);
+    upp90th(styr,endyr) = exp(sdrepPredLnScl+1.645*sdrepPredLnScl.sd); upp90th(endyr+1) = exp(sdrepPredLnSclNxtObs+1.645*logSdLam);
+    dvar_vector low90th(styr,endyr+1);
+    low90th(styr,endyr) = exp(sdrepPredLnScl-1.645*sdrepPredLnScl.sd); low90th(endyr+1) = exp(sdrepPredLnSclNxtObs-1.645*logSdLam);
+    dvar_vector cv  = sqrt(exp(square(sd))-1.0);//cv for estimated/predicted survey quantity
+   
     ofstream mysum("rwout.rep");
     write_R(nobs);
     write_R(uncType);
     write_R(srv_yrs);
     write_R(srv_obs);
     write_R(srv_sds);
-    write_R(yrs);
-    write_R(est);
+    write_R(est_yrs);
+    write_R(est); 
     write_R(cv);
     write_R(lci);
     write_R(uci);
@@ -140,6 +158,11 @@ void model_parameters::final_calcs()
 
 int main(int argc,char * argv[])
 {
+#ifdef DEBUG
+  #ifndef __SUNPRO_C
+std::feclearexcept(FE_ALL_EXCEPT);
+  #endif
+#endif
   ad_set_new_handler();
   ad_exit=&ad_boundf;
     gradient_structure::set_MAX_NVAR_OFFSET(3000);
@@ -155,6 +178,20 @@ int main(int argc,char * argv[])
     mp.preliminary_calculations();
     initial_df1b2params::separable_flag=1;
     mp.computations(argc,argv);
+#ifdef DEBUG
+  #ifndef __SUNPRO_C
+bool failedtest = false;
+if (std::fetestexcept(FE_DIVBYZERO))
+  { cerr << "Error: Detected division by zero." << endl; failedtest = true; }
+if (std::fetestexcept(FE_INVALID))
+  { cerr << "Error: Detected invalid argument." << endl; failedtest = true; }
+if (std::fetestexcept(FE_OVERFLOW))
+  { cerr << "Error: Detected overflow." << endl; failedtest = true; }
+if (std::fetestexcept(FE_UNDERFLOW))
+  { cerr << "Error: Detected underflow." << endl; }
+if (failedtest) { std::abort(); } 
+  #endif
+#endif
     return 0;
 }
 
@@ -203,7 +240,8 @@ void df1b2_parameters::user_function(void)
       obs_mod(predLnScl(srv_yrs(i)),i);
     }
     if (sd_phase()){
-      sdrepPredLnScl = predLnScl;
+      sdrepPredLnSclNxtObs = predLnScl(endyr);
+      sdrepPredLnScl       = predLnScl;
     }
 }
 
@@ -244,6 +282,7 @@ void df1b2_pre_parameters::end_df1b2_funnel(void)
 {  
 lapprox->do_separable_stuff(); 
 other_separable_stuff_end(); 
+funnel_init_var::deallocate_all(); 
 } 
 
 void model_parameters::begin_df1b2_funnel(void) 
@@ -263,6 +302,16 @@ if (lapprox)
 end_df1b2_funnel_stuff();  
 }  
 } 
+void df1b2_parameters::deallocate() 
+{
+  logSdLam.deallocate();
+  predLnScl.deallocate();
+  prior_function_value.deallocate();
+  likelihood_function_value.deallocate();
+  jnll.deallocate();
+  sdrepPredLnSclNxtObs.deallocate();
+  sdrepPredLnScl.deallocate();
+} 
 void df1b2_parameters::allocate(void) 
 {
   logSdLam.allocate("logSdLam");
@@ -270,5 +319,6 @@ void df1b2_parameters::allocate(void)
   prior_function_value.allocate("prior_function_value");
   likelihood_function_value.allocate("likelihood_function_value");
   jnll.allocate("jnll");  /* ADOBJECTIVEFUNCTION */
+  sdrepPredLnSclNxtObs.allocate("sdrepPredLnSclNxtObs");
   sdrepPredLnScl.allocate(styr,endyr,"sdrepPredLnScl");
 }

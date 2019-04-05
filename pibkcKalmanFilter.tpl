@@ -1,4 +1,10 @@
  // Random walk model for survey averaging using log-scale process and observation errors
+//Changes:
+//  2019-04-04: 1. Added 1-step prediction and associated output because PIBKC assessment
+//                 timing was changed to May, prior to the survey, thus requiring
+//                 a prediction of the assessment-year survey quantity to project
+//                 the population for the assessment year to determine OFL.
+//
 GLOBALS_SECTION
     #include <admodel.h>
     #undef REPORT
@@ -10,6 +16,8 @@ DATA_SECTION
     init_int endyr              //end year for interpolation
     ivector yrs(styr,endyr);    //styr:endyr
     !! yrs.fill_seqadd(styr,1);
+    ivector est_yrs(styr,endyr+1); //styr:(endyr+1)
+    !! est_yrs.fill_seqadd(styr,1);
     init_int nobs                //number of observations
     init_int uncType             //uncertainty type (0=cv's, 1=arithmetic cv's)
     init_matrix obs(1,nobs,1,3)  //observations matrix (year, estimate, uncertainty)
@@ -53,6 +61,7 @@ PARAMETER_SECTION
     random_effects_vector predLnScl(styr,endyr);
     objective_function_value jnll;
     
+    sdreport_number sdrepPredLnSclNxtObs;
     sdreport_vector sdrepPredLnScl(styr,endyr);
 
 PROCEDURE_SECTION
@@ -66,7 +75,8 @@ PROCEDURE_SECTION
     }
 
     if (sd_phase()){
-      sdrepPredLnScl = predLnScl;
+      sdrepPredLnSclNxtObs = predLnScl(endyr);
+      sdrepPredLnScl       = predLnScl;
     }
 
 SEPARABLE_FUNCTION void step(const dvariable& predLnScl1, const dvariable& predLnScl2, const dvariable& logSdLam)
@@ -81,22 +91,30 @@ REPORT_SECTION
   
 FINAL_SECTION
     cout<<"in FINAL_SECTION"<<endl;
-    dvar_vector est = exp(sdrepPredLnScl);
-    dvar_vector sd  = sdrepPredLnScl.sd;
-    dvar_vector cv  = sqrt(exp(square(sd))-1.0);
-    dvar_vector uci = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);
-    dvar_vector lci = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);
-    dvar_vector upp90th = exp(sdrepPredLnScl+1.645*sdrepPredLnScl.sd);
-    dvar_vector low90th = exp(sdrepPredLnScl-1.645*sdrepPredLnScl.sd);
+    dvar_vector est(styr,endyr+1); //estimated survey quantity styr-endyr + 1-step prediction for endyr+1
+    est(styr,endyr) = exp(sdrepPredLnScl); est(endyr+1) = exp(sdrepPredLnSclNxtObs);
+    dvar_vector sd(styr,endyr+1);  //std dev for ln-scale survey quantity styr-endyr + 1-step prediction for endyr+1
+    sd(styr,endyr)  = sdrepPredLnScl.sd;   sd(endyr+1)  = logSdLam;
+    
+    dvar_vector uci(styr,endyr+1);
+    uci(styr,endyr) = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);      uci(endyr+1) = exp(sdrepPredLnSclNxtObs+1.96*logSdLam);
+    dvar_vector lci(styr,endyr+1);
+    lci(styr,endyr) = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);      lci(endyr+1) =  exp(sdrepPredLnSclNxtObs-1.96*logSdLam);
+    dvar_vector upp90th(styr,endyr+1);
+    upp90th(styr,endyr) = exp(sdrepPredLnScl+1.645*sdrepPredLnScl.sd); upp90th(endyr+1) = exp(sdrepPredLnSclNxtObs+1.645*logSdLam);
+    dvar_vector low90th(styr,endyr+1);
+    low90th(styr,endyr) = exp(sdrepPredLnScl-1.645*sdrepPredLnScl.sd); low90th(endyr+1) = exp(sdrepPredLnSclNxtObs-1.645*logSdLam);
 
+    dvar_vector cv  = sqrt(exp(square(sd))-1.0);//cv for estimated/predicted survey quantity
+   
     ofstream mysum("rwout.rep");
     write_R(nobs);
     write_R(uncType);
     write_R(srv_yrs);
     write_R(srv_obs);
     write_R(srv_sds);
-    write_R(yrs);
-    write_R(est);
+    write_R(est_yrs);
+    write_R(est); 
     write_R(cv);
     write_R(lci);
     write_R(uci);
