@@ -4,11 +4,16 @@
 //                 timing was changed to May, prior to the survey, thus requiring
 //                 a prediction of the assessment-year survey quantity to project
 //                 the population for the assessment year to determine OFL.
+//  2020-04-12: 1. Removed 1-step prediction variable and associated output because
+//                 it was unnecessary. To do an n-step projection, simply define
+//                 "endyr" as n years larger than the last survey year.
+//              2. Added objective function value, max gradient, and process error to output files.
+//              3. Added sdrep variables for arithmetic-scale process error and estimates.
 //
 GLOBALS_SECTION
     #include <admodel.h>
     #undef REPORT
-    #define write_R(object) mysum << "$" << #object "\n" << object << endl;
+    #define write_R(object) os_results << "$" << #object "\n" << object << endl;
 
 DATA_SECTION
     //data inputs
@@ -16,8 +21,6 @@ DATA_SECTION
     init_int endyr              //end year for interpolation
     ivector yrs(styr,endyr);    //styr:endyr
     !! yrs.fill_seqadd(styr,1);
-    ivector est_yrs(styr,endyr+1); //styr:(endyr+1)
-    !! est_yrs.fill_seqadd(styr,1);
     init_int nobs                //number of observations
     init_int uncType             //uncertainty type (0=cv's, 1=arithmetic cv's)
     init_matrix obs(1,nobs,1,3)  //observations matrix (year, estimate, uncertainty)
@@ -55,14 +58,17 @@ DATA_SECTION
     !! srv_cst = log(2.0*M_PI*srv_var);
     !!cout<<"srv_var = "<<srv_var<<endl;
     !!cout<<"srv_cst = "<<srv_cst<<endl;
+    
+    number maxGrad;//max gradient (extracted in REPORT_SECTION)
  
 PARAMETER_SECTION
     init_number logSdLam
     random_effects_vector predLnScl(styr,endyr);
     objective_function_value jnll;
     
-    sdreport_number sdrepPredLnSclNxtObs;
-    sdreport_vector sdrepPredLnScl(styr,endyr);
+    sdreport_number sdrepSdLam;
+    sdreport_vector sdrepLnPred(styr,endyr);
+    sdreport_vector sdrepPred(styr,endyr);
 
 PROCEDURE_SECTION
     jnll=0.0;
@@ -75,8 +81,9 @@ PROCEDURE_SECTION
     }
 
     if (sd_phase()){
-      sdrepPredLnSclNxtObs = predLnScl(endyr);
-      sdrepPredLnScl       = predLnScl;
+      sdrepSdLam  = exp(logSdLam);
+      sdrepLnPred = predLnScl;
+      sdrepPred   = exp(predLnScl);
     }
 
 SEPARABLE_FUNCTION void step(const dvariable& predLnScl1, const dvariable& predLnScl2, const dvariable& logSdLam)
@@ -87,43 +94,57 @@ SEPARABLE_FUNCTION void obs_mod(const dvariable& predLnScl, int i)
     jnll+=0.5*(srv_cst(i) + square(predLnScl-log(srv_obs(i)))/srv_var(i));
 
 REPORT_SECTION
+    maxGrad = max(fabs(gradients));
+    report << jnll    << "  #objective function value" << endl;
+    report << maxGrad << "  #max gradient" << endl;
+    report << exp(logSdLam) << " #estimated process error" <<endl;
+    report << "#years" << endl;
+    report << yrs <<endl;
+    report << "#predicted values (ln-scale)" << endl;
     report << predLnScl <<endl;
+    report << "#predicted values (arith-scale)" << endl;
+    report << exp(predLnScl) <<endl;
   
 FINAL_SECTION
     cout<<"in FINAL_SECTION"<<endl;
-    dvar_vector est(styr,endyr+1); //estimated survey quantity styr-endyr + 1-step prediction for endyr+1
-    est(styr,endyr) = exp(sdrepPredLnScl); est(endyr+1) = exp(sdrepPredLnSclNxtObs);
-    dvar_vector sd(styr,endyr+1);  //std dev for ln-scale survey quantity styr-endyr + 1-step prediction for endyr+1
-    sd(styr,endyr)  = sdrepPredLnScl.sd;   sd(endyr+1)  = logSdLam;
+    dvar_vector est(styr,endyr); //estimated survey quantity styr:endyr
+    est(styr,endyr) = sdrepPred;
+    dvar_vector sd(styr,endyr);  //std dev for survey quantity styr:endyr
+    sd(styr,endyr)  = sdrepPred.sd;
+
+    dvar_vector cv  = elem_div(sd,est);//cv for estimated/predicted survey quantity
     
-    dvar_vector uci(styr,endyr+1);
-    uci(styr,endyr) = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);      uci(endyr+1) = exp(sdrepPredLnSclNxtObs+1.96*logSdLam);
-    dvar_vector lci(styr,endyr+1);
-    lci(styr,endyr) = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);      lci(endyr+1) =  exp(sdrepPredLnSclNxtObs-1.96*logSdLam);
-    dvar_vector upp90th(styr,endyr+1);
-    upp90th(styr,endyr) = exp(sdrepPredLnScl+1.645*sdrepPredLnScl.sd); upp90th(endyr+1) = exp(sdrepPredLnSclNxtObs+1.645*logSdLam);
-    dvar_vector low90th(styr,endyr+1);
-    low90th(styr,endyr) = exp(sdrepPredLnScl-1.645*sdrepPredLnScl.sd); low90th(endyr+1) = exp(sdrepPredLnSclNxtObs-1.645*logSdLam);
-
-    dvar_vector cv  = sqrt(exp(square(sd))-1.0);//cv for estimated/predicted survey quantity
+    dvar_vector uci(styr,endyr);
+    uci = exp(sdrepLnPred+1.96*sdrepLnPred.sd);
+    dvar_vector lci(styr,endyr);
+    lci = exp(sdrepLnPred-1.96*sdrepLnPred.sd);
+    dvar_vector upp90th(styr,endyr);
+    upp90th = exp(sdrepLnPred+1.645*sdrepLnPred.sd);
+    dvar_vector low90th(styr,endyr);
+    low90th = exp(sdrepLnPred-1.645*sdrepLnPred.sd);
    
-    ofstream mysum("rwout.rep");
-    write_R(nobs);
-    write_R(uncType);
-    write_R(srv_yrs);
-    write_R(srv_obs);
-    write_R(srv_sds);
-    write_R(est_yrs);
-    write_R(est); 
-    write_R(cv);
-    write_R(lci);
-    write_R(uci);
-    write_R(low90th);
-    write_R(upp90th);
-    write_R(sdrepPredLnScl);
-    write_R(sdrepPredLnScl.sd);
+    ofstream os_results("rwout.rep");
+    double objFun = value(jnll);
+    write_R(objFun)
+    write_R(maxGrad)
+    write_R(sdrepSdLam)
+    write_R(sdrepSdLam.sd)
+    write_R(nobs)
+    write_R(uncType)
+    write_R(srv_yrs)
+    write_R(srv_obs)
+    write_R(srv_sds)
+    write_R(yrs)
+    write_R(est)
+    write_R(cv)
+    write_R(lci)
+    write_R(uci)
+    write_R(low90th)
+    write_R(upp90th)
+    write_R(sdrepLnPred)
+    write_R(sdrepLnPred.sd)
 
-    mysum.close();
+    os_results.close();
 
 TOP_OF_MAIN_SECTION
     gradient_structure::set_MAX_NVAR_OFFSET(3000);

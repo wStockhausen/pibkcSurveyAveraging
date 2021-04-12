@@ -6,10 +6,15 @@
 #endif
     #include <admodel.h>
     #undef REPORT
-    #define write_R(object) mysum << "$" << #object "\n" << object << endl;
+    #define write_R(object) os_results << "$" << #object "\n" << object << endl;
+#ifdef DEBUG
+  #include <chrono>
+#endif
 #include <admodel.h>
+#ifdef USE_ADMB_CONTRIBS
 #include <contrib.h>
 
+#endif
 #include <df1b2fun.h>
 
 #include <adrndeff.h>
@@ -23,12 +28,39 @@
   model_parameters * model_parameters::model_parameters_ptr=0;
 model_data::model_data(int argc,char * argv[]) : ad_comm(argc,argv)
 {
+  adstring tmpstring;
+  tmpstring=adprogram_name + adstring(".dat");
+  if (argc > 1)
+  {
+    int on=0;
+    if ( (on=option_match(argc,argv,"-ind"))>-1)
+    {
+      if (on>argc-2 || argv[on+1][0] == '-')
+      {
+        cerr << "Invalid input data command line option"
+                " -- ignored" << endl;
+      }
+      else
+      {
+        tmpstring = adstring(argv[on+1]);
+      }
+    }
+  }
+  global_datafile = new cifstream(tmpstring);
+  if (!global_datafile)
+  {
+    cerr << "Error: Unable to allocate global_datafile in model_data constructor.";
+    ad_exit(1);
+  }
+  if (!(*global_datafile))
+  {
+    delete global_datafile;
+    global_datafile=NULL;
+  }
   styr.allocate("styr");
   endyr.allocate("endyr");
   yrs.allocate(styr,endyr);
  yrs.fill_seqadd(styr,1);
-  est_yrs.allocate(styr,endyr+1);
- est_yrs.fill_seqadd(styr,1);
   nobs.allocate("nobs");
   uncType.allocate("uncType");
   obs.allocate(1,nobs,1,3,"obs");
@@ -60,6 +92,11 @@ cout<<"srv_sds = "<<srv_sds<<endl;
  srv_cst = log(2.0*M_PI*srv_var);
 cout<<"srv_var = "<<srv_var<<endl;
 cout<<"srv_cst = "<<srv_cst<<endl;
+  if (global_datafile)
+  {
+    delete global_datafile;
+    global_datafile = NULL;
+  }
 }
 
 model_parameters::model_parameters(int sz,int argc,char * argv[]) : 
@@ -72,8 +109,9 @@ model_parameters::model_parameters(int sz,int argc,char * argv[]) :
   prior_function_value.allocate("prior_function_value");
   likelihood_function_value.allocate("likelihood_function_value");
   jnll.allocate("jnll");  /* ADOBJECTIVEFUNCTION */
-  sdrepPredLnSclNxtObs.allocate("sdrepPredLnSclNxtObs");
-  sdrepPredLnScl.allocate(styr,endyr,"sdrepPredLnScl");
+  sdrepSdLam.allocate("sdrepSdLam");
+  sdrepLnPred.allocate(styr,endyr,"sdrepLnPred");
+  sdrepPred.allocate(styr,endyr,"sdrepPred");
 }
 void model_parameters::userfunction(void)
 {
@@ -86,8 +124,9 @@ void model_parameters::userfunction(void)
       obs_mod(predLnScl(srv_yrs(i)),i);
     }
     if (sd_phase()){
-      sdrepPredLnSclNxtObs = predLnScl(endyr);
-      sdrepPredLnScl       = predLnScl;
+      sdrepSdLam  = exp(logSdLam);
+      sdrepLnPred = predLnScl;
+      sdrepPred   = exp(predLnScl);
     }
 }
 
@@ -115,50 +154,62 @@ void model_parameters::report(const dvector& gradients)
     cerr << "error trying to open report file"  << adprogram_name << ".rep";
     return;
   }
+    maxGrad = max(fabs(gradients));
+    report << jnll    << "  #objective function value" << endl;
+    report << maxGrad << "  #max gradient" << endl;
+    report << exp(logSdLam) << " #estimated process error" <<endl;
+    report << "#years" << endl;
+    report << yrs <<endl;
+    report << "#predicted values (ln-scale)" << endl;
     report << predLnScl <<endl;
-  
+    report << "#predicted values (arith-scale)" << endl;
+    report << exp(predLnScl) <<endl;
 }
 
 void model_parameters::final_calcs()
 {
     cout<<"in FINAL_SECTION"<<endl;
-    dvar_vector est(styr,endyr+1); //estimated survey quantity styr-endyr + 1-step prediction for endyr+1
-    est(styr,endyr) = exp(sdrepPredLnScl); est(endyr+1) = exp(sdrepPredLnSclNxtObs);
-    dvar_vector sd(styr,endyr+1);  //std dev for ln-scale survey quantity styr-endyr + 1-step prediction for endyr+1
-    sd(styr,endyr)  = sdrepPredLnScl.sd;   sd(endyr+1)  = logSdLam;
-    
-    dvar_vector uci(styr,endyr+1);
-    uci(styr,endyr) = exp(sdrepPredLnScl+1.96*sdrepPredLnScl.sd);      uci(endyr+1) = exp(sdrepPredLnSclNxtObs+1.96*logSdLam);
-    dvar_vector lci(styr,endyr+1);
-    lci(styr,endyr) = exp(sdrepPredLnScl-1.96*sdrepPredLnScl.sd);      lci(endyr+1) =  exp(sdrepPredLnSclNxtObs-1.96*logSdLam);
-    dvar_vector upp90th(styr,endyr+1);
-    upp90th(styr,endyr) = exp(sdrepPredLnScl+1.645*sdrepPredLnScl.sd); upp90th(endyr+1) = exp(sdrepPredLnSclNxtObs+1.645*logSdLam);
-    dvar_vector low90th(styr,endyr+1);
-    low90th(styr,endyr) = exp(sdrepPredLnScl-1.645*sdrepPredLnScl.sd); low90th(endyr+1) = exp(sdrepPredLnSclNxtObs-1.645*logSdLam);
-    dvar_vector cv  = sqrt(exp(square(sd))-1.0);//cv for estimated/predicted survey quantity
-   
-    ofstream mysum("rwout.rep");
-    write_R(nobs);
-    write_R(uncType);
-    write_R(srv_yrs);
-    write_R(srv_obs);
-    write_R(srv_sds);
-    write_R(est_yrs);
-    write_R(est); 
-    write_R(cv);
-    write_R(lci);
-    write_R(uci);
-    write_R(low90th);
-    write_R(upp90th);
-    write_R(sdrepPredLnScl);
-    write_R(sdrepPredLnScl.sd);
-    mysum.close();
+    dvar_vector est(styr,endyr); //estimated survey quantity styr:endyr
+    est(styr,endyr) = sdrepPred;
+    dvar_vector sd(styr,endyr);  //std dev for survey quantity styr:endyr
+    sd(styr,endyr)  = sdrepPred.sd;
+    dvar_vector cv  = elem_div(sd,est);//cv for estimated/predicted survey quantity
+    dvar_vector uci(styr,endyr);
+    uci = exp(sdrepLnPred+1.96*sdrepLnPred.sd);
+    dvar_vector lci(styr,endyr);
+    lci = exp(sdrepLnPred-1.96*sdrepLnPred.sd);
+    dvar_vector upp90th(styr,endyr);
+    upp90th = exp(sdrepLnPred+1.645*sdrepLnPred.sd);
+    dvar_vector low90th(styr,endyr);
+    low90th = exp(sdrepLnPred-1.645*sdrepLnPred.sd);
+    ofstream os_results("rwout.rep");
+    double objFun = value(jnll);
+    write_R(objFun)
+    write_R(maxGrad)
+    write_R(sdrepSdLam)
+    write_R(sdrepSdLam.sd)
+    write_R(nobs)
+    write_R(uncType)
+    write_R(srv_yrs)
+    write_R(srv_obs)
+    write_R(srv_sds)
+    write_R(yrs)
+    write_R(est)
+    write_R(cv)
+    write_R(lci)
+    write_R(uci)
+    write_R(low90th)
+    write_R(upp90th)
+    write_R(sdrepLnPred)
+    write_R(sdrepLnPred.sd)
+    os_results.close();
 }
   long int arrmblsize=0;
 
 int main(int argc,char * argv[])
 {
 #ifdef DEBUG
+  auto start = std::chrono::high_resolution_clock::now();
   #ifndef __SUNPRO_C
 std::feclearexcept(FE_ALL_EXCEPT);
   #endif
@@ -170,6 +221,9 @@ std::feclearexcept(FE_ALL_EXCEPT);
     gradient_structure::set_YES_SAVE_VARIABLES_VALUES();
       if (!arrmblsize) arrmblsize=150000;
     df1b2variable::noallocate=1;
+df1b2variable::pool = new adpool();
+initial_df1b2params::varsptr = new P_INITIAL_DF1B2PARAMS[1000];
+{
     df1b2_parameters mp(arrmblsize,argc,argv);
     mp.iprint=10;
 
@@ -178,7 +232,15 @@ std::feclearexcept(FE_ALL_EXCEPT);
     mp.preliminary_calculations();
     initial_df1b2params::separable_flag=1;
     mp.computations(argc,argv);
+}
+delete [] init_df1b2variable::list;
+init_df1b2variable::list = NULL;
+delete [] initial_df1b2params::varsptr;
+initial_df1b2params::varsptr = NULL;
+delete df1b2variable::pool;
+df1b2variable::pool = NULL;
 #ifdef DEBUG
+  std::cout << endl << argv[0] << " elapsed time is " << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() << " microseconds." << endl;
   #ifndef __SUNPRO_C
 bool failedtest = false;
 if (std::fetestexcept(FE_DIVBYZERO))
@@ -240,8 +302,9 @@ void df1b2_parameters::user_function(void)
       obs_mod(predLnScl(srv_yrs(i)),i);
     }
     if (sd_phase()){
-      sdrepPredLnSclNxtObs = predLnScl(endyr);
-      sdrepPredLnScl       = predLnScl;
+      sdrepSdLam  = exp(logSdLam);
+      sdrepLnPred = predLnScl;
+      sdrepPred   = exp(predLnScl);
     }
 }
 
@@ -309,8 +372,9 @@ void df1b2_parameters::deallocate()
   prior_function_value.deallocate();
   likelihood_function_value.deallocate();
   jnll.deallocate();
-  sdrepPredLnSclNxtObs.deallocate();
-  sdrepPredLnScl.deallocate();
+  sdrepSdLam.deallocate();
+  sdrepLnPred.deallocate();
+  sdrepPred.deallocate();
 } 
 void df1b2_parameters::allocate(void) 
 {
@@ -319,6 +383,7 @@ void df1b2_parameters::allocate(void)
   prior_function_value.allocate("prior_function_value");
   likelihood_function_value.allocate("likelihood_function_value");
   jnll.allocate("jnll");  /* ADOBJECTIVEFUNCTION */
-  sdrepPredLnSclNxtObs.allocate("sdrepPredLnSclNxtObs");
-  sdrepPredLnScl.allocate(styr,endyr,"sdrepPredLnScl");
+  sdrepSdLam.allocate("sdrepSdLam");
+  sdrepLnPred.allocate(styr,endyr,"sdrepLnPred");
+  sdrepPred.allocate(styr,endyr,"sdrepPred");
 }
