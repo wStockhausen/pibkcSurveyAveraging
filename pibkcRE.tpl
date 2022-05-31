@@ -9,12 +9,14 @@
 //                 "endyr" as n years larger than the last survey year.
 //              2. Added objective function value, max gradient, and process error to output files.
 //              3. Added sdrep variables for arithmetic-scale process error and estimates.
-//
+//  ??        : 1. Added sdreport_number sdrepLogSdLam value and associated sd to R output.
+//              2. Converted to ADMB random effects estimation.
+//              3. Revised tpl filename to pibkcRE.tpl.
 GLOBALS_SECTION
     #include <admodel.h>
     #undef REPORT
     #define write_R(object) os_results << "$" << #object "\n" << object << endl;
-
+   
 DATA_SECTION
     //data inputs
     init_int styr               //start year for interpolation
@@ -64,8 +66,11 @@ DATA_SECTION
 PARAMETER_SECTION
     init_number logSdLam
     random_effects_vector predLnScl(styr,endyr);
+//    init_vector predLnScl(styr,endyr);
+    
     objective_function_value jnll;
     
+    sdreport_number sdrepLogSdLam;
     sdreport_number sdrepSdLam;
     sdreport_vector sdrepLnPred(styr,endyr);
     sdreport_vector sdrepPred(styr,endyr);
@@ -81,6 +86,7 @@ PROCEDURE_SECTION
     }
 
     if (sd_phase()){
+      sdrepLogSdLam = logSdLam;
       sdrepSdLam  = exp(logSdLam);
       sdrepLnPred = predLnScl;
       sdrepPred   = exp(predLnScl);
@@ -92,6 +98,14 @@ SEPARABLE_FUNCTION void step(const dvariable& predLnScl1, const dvariable& predL
 
 SEPARABLE_FUNCTION void obs_mod(const dvariable& predLnScl, int i)
     jnll+=0.5*(srv_cst(i) + square(predLnScl-log(srv_obs(i)))/srv_var(i));
+
+//FUNCTION void step(const dvariable& predLnScl1, const dvariable& predLnScl2, const dvariable& logSdLam)
+//    dvariable var=exp(2.0*logSdLam);
+//    jnll+=0.5*(log(2.0*M_PI*var)+square(predLnScl2-predLnScl1)/var);
+//
+//FUNCTION void obs_mod(const dvariable& predLnScl, int i)
+//    jnll+=0.5*(srv_cst(i) + square(predLnScl-log(srv_obs(i)))/srv_var(i));
+
 
 REPORT_SECTION
     maxGrad = max(fabs(gradients));
@@ -127,6 +141,8 @@ FINAL_SECTION
     double objFun = value(jnll);
     write_R(objFun)
     write_R(maxGrad)
+    write_R(sdrepLogSdLam)
+    write_R(sdrepLogSdLam.sd)
     write_R(sdrepSdLam)
     write_R(sdrepSdLam.sd)
     write_R(nobs)

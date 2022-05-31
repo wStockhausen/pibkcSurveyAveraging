@@ -49,7 +49,8 @@ PLATFORM=MAC
 ADMB_HOME_WIN=C:/Programs/ADMB64
 ADMB_HOME_MAC=/Users/WilliamStockhausen/Work/Programming/admb
 ADMB_HOME=${ADMB_HOME_${PLATFORM}}
-TPL=pibkcKalmanFilter
+TPL_CONV=tpl2rem
+TPL=pibkcRE
 MKDIR=mkdir
 CP=cp
 CCADMIN=CCadmin
@@ -57,10 +58,10 @@ CCADMIN=CCadmin
 .PRECIOUS: %.cpp %.htp
 	
 %.cpp: %.tpl
-	env ADMB_HOME=${ADMB_HOME} "${ADMB_HOME}/bin/tpl2rem" ${TPL}
+	env ADMB_HOME=${ADMB_HOME} "${ADMB_HOME}/bin/{TPL_CONV}" ${TPL}
 	
 %.htp: %.tpl
-	env ADMB_HOME=${ADMB_HOME} "${ADMB_HOME}/bin/tpl2rem" ${TPL}
+	env ADMB_HOME=${ADMB_HOME} "${ADMB_HOME}/bin/{TPL_CONV}" ${TPL}
 
 # .tpl2cpp
 .tpl2cpp:
